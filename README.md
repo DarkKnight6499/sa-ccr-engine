@@ -18,13 +18,13 @@ exposures", March 2014 (rev. April 2014). bis.org/publ/bcbs279.htm
 - `Multiplier = min[1, Floor + (1-Floor) x exp((V-C) / (2 x (1-Floor) x AddOn_aggregate))]`, Floor = 5%
 - `AddOn_aggregate` = sum of AddOn by asset class (IR, FX, Credit, Equity, Commodity)
 
-**Trade-level waterfall** (`saccr/engine.py`):
+**Trade-level waterfall** (`python/saccr/engine.py`):
 1. Adjusted notional `d`: `notional x SD` for IR/Credit, `SD = [exp(-0.05*S) - exp(-0.05*E)] / 0.05`; notional directly for FX/Equity/Commodity
 2. Supervisory delta: +/-1 linear; Black-Scholes `N(d1)` for options
 3. Maturity factor: unmargined = `sqrt(min(M, 1))` floored at MPOR; margined = `1.5 x sqrt(MPOR/1yr)`, flat across all margined trades
 4. Effective notional = `delta x d x MF`
 
-**Aggregation** (`saccr/aggregation.py`):
+**Aggregation** (`python/saccr/aggregation.py`):
 - IR: 3 maturity buckets (<1y, 1-5y, >5y) per currency, cross-bucket correlation (1.4x adjacent buckets, 0.6x buckets 1 & 3), summed across currencies
 - FX: `SF x |sum(EffNotional)|` per currency-pair hedging set, summed across pairs
 - Credit / Equity / Commodity: `sqrt[(sum rho_i*SF_i*Eff_i)^2 + sum((1-rho_i^2)*(SF_i*Eff_i)^2)]`
@@ -32,16 +32,18 @@ exposures", March 2014 (rev. April 2014). bis.org/publ/bcbs279.htm
 ## Structure
 
 ```
-SACCR_EAD_Calculator.xlsx   Reference Excel model (formulas + 18-trade sample, computed by hand first)
-saccr/
-  params.py       Supervisory factors, correlations, alpha, floors (SupervisoryParams dataclass)
-  trades.py        Trade dataclass + CSV loader
-  engine.py         Per-trade waterfall (duration, delta, maturity factor, effective notional)
-  aggregation.py    AddOn build-up per asset class
-  ead.py            RC, multiplier, PFE, EAD, and the scenario runner
-data/trades_sample.csv   18-trade / 2-netting-set sample portfolio (same as the Excel's Trade_Inputs sheet)
-tests/test_against_excel.py   Golden-value tests vs. the Excel workbook's own cached results
-run_saccr.py       CLI entry point
+excel/
+  SACCR_EAD_Calculator.xlsx   Reference Excel model (formulas + 18-trade sample, computed by hand first)
+python/
+  saccr/
+    params.py       Supervisory factors, correlations, alpha, floors (SupervisoryParams dataclass)
+    trades.py        Trade dataclass + CSV loader
+    engine.py         Per-trade waterfall (duration, delta, maturity factor, effective notional)
+    aggregation.py    AddOn build-up per asset class
+    ead.py            RC, multiplier, PFE, EAD, and the scenario runner
+  data/trades_sample.csv   18-trade / 2-netting-set sample portfolio (same as the Excel's Trade_Inputs sheet)
+  tests/test_against_excel.py   Golden-value tests vs. the Excel workbook's own cached results
+  run_saccr.py       CLI entry point
 ```
 
 ## Sample portfolio
@@ -61,6 +63,7 @@ All notionals, MTMs, and CSA terms are illustrative placeholders, not real trade
 ## Run
 
 ```
+cd python
 py -3 run_saccr.py
 py -3 -m pytest tests/
 ```
