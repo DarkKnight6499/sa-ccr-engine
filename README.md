@@ -31,7 +31,8 @@ exposures", March 2014 (rev. April 2014). bis.org/publ/bcbs279.htm
 **Aggregation** (`python/saccr/aggregation.py`):
 - IR: 3 maturity buckets (<1y, 1-5y, >5y) per currency, cross-bucket correlation (1.4x adjacent buckets, 0.6x buckets 1 & 3), summed across currencies
 - FX: `SF x |sum(EffNotional)|` per currency-pair hedging set, summed across pairs
-- Credit / Equity / Commodity: `sqrt[(sum rho_i*SF_i*Eff_i)^2 + sum((1-rho_i^2)*(SF_i*Eff_i)^2)]`
+- Credit / Equity: trades net within each hedging set first (long/short offsets), then `sqrt[(sum rho_i*SF_i*Eff_i)^2 + sum((1-rho_i^2)*(SF_i*Eff_i)^2)]` across hedging sets (BIS CRE52)
+- Commodity: same within-hedging-set netting, but hedging sets are summed rather than correlated, so Oil_Gas and Metal cannot diversify against each other (BIS CRE52)
 
 ## Structure
 
@@ -63,7 +64,8 @@ python/
     report.py           Formats a MarginCallResult as a margin call report
   data/trades_sample.csv   18-trade / 2-netting-set sample portfolio (same as the Excel's Trade_Inputs sheet)
   tests/
-    test_against_excel.py   SA-CCR golden-value tests vs. the Excel workbook's own cached results
+    test_against_excel.py   SA-CCR golden-value tests vs. the Excel workbook's own cached results (NS-A commodity is a documented, intentional divergence)
+    test_aggregation_netting.py   Multi-trade-per-hedging-set tests for the Credit/Equity netting and Commodity summing rules
     test_ba_cva.py            BA-CVA tests, each formula piece checked against an independently hand-derived value
     test_simm.py               SIMM sanity checks + hand-computable toy cases for each aggregation formula
     test_csa.py                 CSA margin call toy cases
@@ -84,7 +86,9 @@ All notionals, MTMs, and CSA terms are illustrative placeholders, not real trade
 
 ## Scope / simplifications
 
-Same as the Excel model:
+**Known divergence from the Excel workbook:** the workbook applies the Credit/Equity correlated-hedging-set formula to Commodity, which lets Oil_Gas and Metal diversify against each other and which BIS CRE52 does not allow. The Python port follows the standard, so NS-A's commodity AddOn (and its PFE and EAD) differ from the workbook by design; the golden tests document this.
+
+Otherwise the same as the Excel model:
 - All trades start today (S=0); 250-business-day year for MF/MPOR floors
 - MPOR = standard 10-business-day floor throughout (no 20-day large/illiquid override)
 - FX notional = given USD leg, no separate FX-rate revaluation

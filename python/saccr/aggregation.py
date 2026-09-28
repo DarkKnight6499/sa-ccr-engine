@@ -61,20 +61,50 @@ def _fx_addon(trade_calcs: list[TradeCalc], margined: bool) -> float:
 
 
 def _correlated_addon(trade_calcs: list[TradeCalc], asset_class: str, margined: bool) -> float:
-    """sqrt[(sum rho_i*SF_i*Eff_i)^2 + sum((1-rho_i^2)*(SF_i*Eff_i)^2)]. Credit/Equity/Commodity."""
+    """sqrt[(sum rho_i*SF_i*NetEff_i)^2 + sum((1-rho_i^2)*(SF_i*NetEff_i)^2)].
+    Credit/Equity only. Per BIS CRE52, Credit and Equity are each a single
+    hedging set per netting set, sub-divided by reference entity; entities
+    are netted first, then this correlated formula combines them, recognising
+    diversification between entities via rho. (Commodity looks superficially
+    similar but is NOT this formula - see _commodity_addon.)"""
     class_trades = [tc for tc in trade_calcs if tc.asset_class == asset_class]
     if not class_trades:
         return 0.0
 
+    hedging_sets = sorted({tc.hedging_set for tc in class_trades})
+
     sum_rho_sf_eff = 0.0
     sum_unrho_sf_eff2 = 0.0
-    for tc in class_trades:
-        eff = _eff_notional(tc, margined)
-        sf_eff = tc.sf * eff
-        sum_rho_sf_eff += tc.rho * sf_eff
-        sum_unrho_sf_eff2 += (1 - tc.rho ** 2) * sf_eff ** 2
+    for hs in hedging_sets:
+        hs_trades = [tc for tc in class_trades if tc.hedging_set == hs]
+        rho = hs_trades[0].rho
+        sf = hs_trades[0].sf
+        net_eff = sum(_eff_notional(tc, margined) for tc in hs_trades)
+        sf_eff = sf * net_eff
+        sum_rho_sf_eff += rho * sf_eff
+        sum_unrho_sf_eff2 += (1 - rho ** 2) * sf_eff ** 2
 
     return math.sqrt(sum_rho_sf_eff ** 2 + sum_unrho_sf_eff2)
+
+
+def _commodity_addon(trade_calcs: list[TradeCalc], margined: bool) -> float:
+    """Sum by commodity-type hedging set: SF x |NetEff| per hedging set, summed
+    across hedging sets with NO diversification benefit between them. Per BIS
+    CRE52, Commodity's hierarchy differs from Credit/Equity: hedging sets are
+    defined by commodity type (Energy, Metals, Agricultural, Other), trades
+    are netted within a hedging set, and hedging-set add-ons are then simply
+    summed - not combined via the correlated sqrt formula, which would give
+    Oil_Gas and Metal an unearned diversification benefit against each other."""
+    class_trades = [tc for tc in trade_calcs if tc.asset_class == "Commodity"]
+    hedging_sets = sorted({tc.hedging_set for tc in class_trades})
+
+    total = 0.0
+    for hs in hedging_sets:
+        hs_trades = [tc for tc in class_trades if tc.hedging_set == hs]
+        sf = hs_trades[0].sf
+        net_eff = sum(_eff_notional(tc, margined) for tc in hs_trades)
+        total += sf * abs(net_eff)
+    return total
 
 
 def aggregate_addon(trade_calcs: list[TradeCalc], margined: bool, params: SupervisoryParams) -> AddOnBreakdown:
@@ -83,5 +113,5 @@ def aggregate_addon(trade_calcs: list[TradeCalc], margined: bool, params: Superv
         fx=_fx_addon(trade_calcs, margined),
         credit=_correlated_addon(trade_calcs, "Credit", margined),
         equity=_correlated_addon(trade_calcs, "Equity", margined),
-        commodity=_correlated_addon(trade_calcs, "Commodity", margined),
+        commodity=_commodity_addon(trade_calcs, margined),
     )
