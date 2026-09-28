@@ -175,21 +175,19 @@ def _fx_risk_class_margin(buckets: dict, threshold: float) -> float:
     return within_bucket_margin(sensitivities, threshold, _fx_within_bucket_corr, bucket=FX_BUCKET).k
 
 
-def compute_simm_im(trades: list[Trade], netting_set: str, params: SIMMParams = SIMMParams()) -> SIMMResult:
-    ns_trades = [t for t in trades if t.netting_set == netting_set]
-
+def compute_simm_im_from_buckets(
+    netting_set: str, ir_delta_buckets: dict, fx_delta_buckets: dict, fx_vega_buckets: dict,
+    params: SIMMParams = SIMMParams(),
+) -> SIMMResult:
+    """Run the margin aggregation on already-bucketed sensitivities (the CRIF entry point)."""
     ir_delta_margin = _ir_risk_class_margin(
-        _group_ir_delta_buckets(ns_trades), params.ir_delta_concentration_threshold,
+        ir_delta_buckets, params.ir_delta_concentration_threshold,
         _tenor_corr_fn, IR_CROSS_CURRENCY_CORR,
     )
     ir_vega_margin = 0.0  # no IR options in the sample portfolio
 
-    fx_delta_margin = _fx_risk_class_margin(
-        _group_fx_delta_buckets(ns_trades), params.fx_delta_concentration_threshold,
-    )
-    fx_vega_margin = _fx_risk_class_margin(
-        _group_fx_vega_buckets(ns_trades), params.fx_vega_concentration_threshold,
-    )
+    fx_delta_margin = _fx_risk_class_margin(fx_delta_buckets, params.fx_delta_concentration_threshold)
+    fx_vega_margin = _fx_risk_class_margin(fx_vega_buckets, params.fx_vega_concentration_threshold)
 
     ir_margin = combine_delta_vega(ir_delta_margin, ir_vega_margin)
     fx_margin = combine_delta_vega(fx_delta_margin, fx_vega_margin)
@@ -200,4 +198,12 @@ def compute_simm_im(trades: list[Trade], netting_set: str, params: SIMMParams = 
         ir_delta_margin=ir_delta_margin, ir_vega_margin=ir_vega_margin,
         fx_delta_margin=fx_delta_margin, fx_vega_margin=fx_vega_margin,
         ir_margin=ir_margin, fx_margin=fx_margin, total_im=total_im,
+    )
+
+
+def compute_simm_im(trades: list[Trade], netting_set: str, params: SIMMParams = SIMMParams()) -> SIMMResult:
+    ns_trades = [t for t in trades if t.netting_set == netting_set]
+    return compute_simm_im_from_buckets(
+        netting_set, _group_ir_delta_buckets(ns_trades), _group_fx_delta_buckets(ns_trades),
+        _group_fx_vega_buckets(ns_trades), params,
     )

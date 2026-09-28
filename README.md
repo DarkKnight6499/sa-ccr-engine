@@ -55,6 +55,8 @@ python/
     risk_weights.py    IR/FX risk weight, tenor, and correlation lookups (illustrative, see below)
     aggregation.py    Concentration risk factor, within-bucket and cross-bucket margin, risk-class combination
     engine.py           Maps trades to IR/FX delta and vega sensitivities, runs the SIMM IM pipeline
+    crif.py             CRIF export/import (one row per trade per risk factor) and SIMM computed straight from CRIF
+    optimization.py     CRIF dispute reconciliation, trade allocation by incremental IM, multilateral compression
   csa/
     terms.py           CSATerms dataclass (threshold, MTA, IA, currently posted VM/IM) + sample terms
     engine.py           Daily VM and IM call computation against those terms
@@ -65,10 +67,12 @@ python/
     test_ba_cva.py            BA-CVA tests, each formula piece checked against an independently hand-derived value
     test_simm.py               SIMM sanity checks + hand-computable toy cases for each aggregation formula
     test_csa.py                 CSA margin call toy cases
+    test_crif_optimization.py   CRIF round trip, dispute reconciliation, allocation and compression checks
   run_saccr.py       SA-CCR CLI entry point
   run_ba_cva.py      BA-CVA CLI entry point, consumes run_saccr.py's EAD output directly
   run_simm.py         SIMM CLI entry point: IM breakdown + CSA margin call report per netting set
   compare_simm_saccr.py   Side-by-side SIMM IM vs. SA-CCR PFE add-on report
+  run_im_optimization.py  CRIF export, IM dispute reconciliation, trade allocation and compression demo
 ```
 
 ## Sample portfolio
@@ -219,6 +223,41 @@ scenario (SA-CCR treats it as Unmargined), so it carries no entry in
 `csa/terms.py`'s `SAMPLE_CSA_TERMS` and `run_simm.py` never fabricates a
 margin call for it.
 
+## CRIF, IM disputes, and margin optimization
+
+`simm/crif.py` writes the sensitivities the engine already computes as a CRIF
+(Common Risk Interchange Format) file, the flat file two counterparties exchange
+so both can run SIMM on the same inputs: one row per trade per risk factor
+(`Risk_IRCurve` by currency and tenor, `Risk_FX`, `Risk_FXVol`). Running SIMM
+from a CRIF (`compute_simm_im_from_crif`) reproduces the trade-level IM exactly,
+which the tests assert for both netting sets, including through a file
+round trip. Simplifications versus the full CRIF spec: RatesFX product class
+only, no IR sub-curve label, and the FX qualifier is the currency pair (the
+engine's own risk-factor key) rather than a single currency.
+
+`simm/optimization.py` builds three tools on top of it:
+
+- **Dispute reconciliation** (`reconcile_crif`): nets each side's CRIF per risk
+  factor for one portfolio, lists every factor where they differ (including
+  factors present on only one side, i.e. a missing or unbooked trade) sorted by
+  size, and reports both sides' IM and the gap. This is the workflow for
+  root-causing an initial margin difference against a counterparty.
+- **Trade allocation** (`rank_netting_sets_for_trade`): incremental IM of
+  booking a new trade into each candidate netting set, cheapest first.
+  Offsetting an existing position lowers IM; adding to it raises it.
+- **Multilateral compression** (`compress_multilateral`): finds trades in
+  different netting sets with the same instrument, notional, and maturity but
+  opposite direction, so the dealer is flat across them while each netting set
+  still margins its leg independently. It greedily tears up the pair with the
+  largest IM saving until none saves margin, and `net_book_sensitivities`
+  proves the dealer's net risk per factor is unchanged. This is a greedy pair
+  tear-up on this engine's illustrative SIMM calibration, not a multi-dealer
+  compression cycle solved as an optimization.
+
+`run_im_optimization.py` demonstrates all three on the sample portfolio plus a
+few clearly labelled illustrative trades (offsetting legs for the compression
+demo, and a counterparty CRIF that omits one trade and mis-books a notional).
+
 ## Run
 
 ```
@@ -227,5 +266,6 @@ py -3 run_saccr.py
 py -3 run_ba_cva.py
 py -3 run_simm.py
 py -3 compare_simm_saccr.py
+py -3 run_im_optimization.py
 py -3 -m pytest tests/
 ```
